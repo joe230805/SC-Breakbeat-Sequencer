@@ -148,7 +148,7 @@ if(beatArray.notEmpty,{
 			\arrSlices, arrSlicesBuf,
 			\newBpm, bpm, \sampleBpm, ~sampleBpm, \clipsPerBeat, slicesEachBeat, \bassline, arrBasslineBuf, \amp, 0.8
 		]);
-});
+	});
 };
 )
 
@@ -159,13 +159,14 @@ var w, bw, playPause, bpmButt, bpmLabel, barsButt, barsLabel, beatCountButt, bea
 
 //Drum pad window always on top, since it contains the record and play/pause button
 if(~clipPointers.size > 9 , {
-	w = Window("Drum Pad", Rect(200, 400, 330, 260));
+	w = Window("Drum Pad", Rect(200, 400, 330, 260), false);
 },{
-	w = Window("Drum Pad", Rect(200, 400, 290, 200));
+	w = Window("Drum Pad", Rect(200, 400, 290, 200), false);
 });
 
 w.alwaysOnTop = true;
-bw = Window("Bass Pad", Rect(400, 400, 770, 400));
+
+bw = Window("Bass Pad", Rect(400, 400, 770, 400), false);
 //Free synths and close all windows on drum pad window close
 w.onClose = { drumLoop.free;bw.close;
 	recordingArray.do {|item|
