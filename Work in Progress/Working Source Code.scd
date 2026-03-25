@@ -67,18 +67,20 @@ SynthDef(\playClip, {|startSample, endSample, bufnum, durationSeconds, amp|
 };
 
 //Play drums and bassline defined by arrPointers and bassline
-SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clipsPerBeat, bassline, amp|
-	var i, j, start, end, playhead, triggerRate, trig, durMul, sig, sig2, freq, env;
+SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clipsPerBeat, bassline, amp, pitchMul, reset = 0|
+	var i, j, start, end, playhead, triggerRate, trig, durMul, sig, sig2, freq, env, fftWindow, startTrig;
 
 	//Value to multiply any playback rate arguments like 'rate' in Phasor
     durMul = newBpm / sampleBpm;
+	fftWindow = 0.1; // FFT window used for pitch shifting
 	//Setting up a trigger to the bpm
     triggerRate = (newBpm / 60) * clipsPerBeat;
     trig = Impulse.kr(triggerRate);
 
 	//Pulse counter for the trigger determines what part of the drum loop is being played back (index num)
-    i = PulseCount.kr(trig) % BufFrames.kr(arrSlices); //[AI]
-	Poll.kr(Impulse.kr(triggerRate), i, "Slice: ");
+    i = PulseCount.kr(trig, reset) % BufFrames.kr(arrSlices); //[AI]
+
+	Poll.kr(Impulse.kr(triggerRate), i, "Slice ");
 	//Get the value at index position i (drum slice pointer)
     j = Index.kr(arrSlices, i); //[AI]
 
@@ -87,7 +89,7 @@ SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clips
     end   = Index.kr(arrPointers, j + 1); //[AI]
 
 	//Playhead points at the sample being played back. It phases between start and end sample, which changes with each impulse from trig
-    playhead = Phasor.ar(trig, BufRateScale.kr(bufnum) * durMul, start, end, start); //[AI]
+	playhead = Phasor.ar(trig, BufRateScale.kr(bufnum) * durMul, start, end, start); //[AI]
 
 	//Frequency of current bass wave selected from bassline array, using the same pulse counter as before
 	freq = Index.kr(bassline, i);
@@ -96,6 +98,8 @@ SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clips
 
 	//Drum sig (expects stereo buffer)
     sig = BufRd.ar(2, bufnum, playhead, 0); //[AI]
+	//Shift sig pitch
+	sig = PitchShift.ar(sig, fftWindow, pitchMul); // [AI]
 	//Bass sig
 	sig2 = SinOsc.ar(freq, 0, 1, 0) * env;
 	//Multiply all outputs by amp to allow volume control
@@ -128,7 +132,7 @@ if(beatArray.notEmpty,{
 };
 
 ~makeDrumLoop = { |beatArray, bpm, slicesEachBeat|
-	var arrPointersBuf, arrSlicesBuf, arrBasslineBuf, basslineArray;
+	var arrPointersBuf, arrSlicesBuf, arrBasslineBuf, basslineArray, synth;
 
 	basslineArray = [];
 	if(beatArray.notEmpty,{
@@ -142,12 +146,15 @@ if(beatArray.notEmpty,{
 		arrBasslineBuf = Buffer.loadCollection(s, basslineArray); //[AI]
 
 		//Create the synth
-		Synth.newPaused(\playRegion, [
+		synth = Synth.newPaused(\playRegion, [
 			\bufnum, b.bufnum,
 			\arrPointers, arrPointersBuf,
 			\arrSlices, arrSlicesBuf,
 			\newBpm, bpm, \sampleBpm, ~sampleBpm, \clipsPerBeat, slicesEachBeat, \bassline, arrBasslineBuf, \amp, 0.8
 		]);
+		synth.set(\reset, 1);
+		AppClock.sched(0.01, {synth.set(\reset, 0);});
+		synth;
 	});
 };
 )
@@ -422,12 +429,13 @@ makeBlankKey = { |label, num, x, y|
     });
 };
 
-recordingRow = {|synth, recording, spb|
-	var onBut, resetBut, top, synthPos, vol;
+recordingRow = {|synth, recording, slicesPerBeat|
+	var onBut, resetBut, top, synthPos, vol, pitchSl, pitchTxt;
 	top = w.bounds.height;
 	synthPos = recordingArray.indexOf(nil);
-		recording.postln;
-	w.bounds = Rect(w.bounds.left, w.bounds.top, w.bounds.width, w.bounds.height + 30);
+	recording.postln;
+	w.bounds = Rect(w.bounds.left, w.bounds.top, w.bounds.width, w.bounds.height + 50);
+	recordingArray[synthPos] = synth;
 	onBut = Button(w, Rect(30, top, 30, 20))
 	.states_([["Off"], ["On"]])
 	.action_({|butt|
@@ -436,14 +444,10 @@ recordingRow = {|synth, recording, spb|
 		syn = synth;
 		index.postln;
 		if(butt.value == 0, {
-
-			recordingArray[index].run(false);
-			recordingArray[index] = nil;
+			recordingArray[index].set(\amp, 0);
 		},{
-			recordingArray[index] = syn;
-
 			if(playPause.value == 1, {
-				recordingArray[index].run(true);
+				recordingArray[index].set(\amp, vol.value *1.25);
 			});
 		});
 		recordingArray.postln;
@@ -453,19 +457,37 @@ recordingRow = {|synth, recording, spb|
 	vol = Slider(w, Rect(65, top, 160, 20))
 	.action_({|sl|
 		var index = synthPos;
-		recordingArray[index].set(\amp, sl.value * 1.25);
+		if(onBut.value == 1, {
+			recordingArray[index].set(\amp, sl.value * 1.25);
+		});
 	});
 	vol.valueAction = 0.64;
+
+	pitchTxt = StaticText(w, Rect(65, top+20, 80, 10));
+
+	pitchSl = Slider(w, Rect(65, top+30, 80, 10))
+	.action_({|sl|
+		var index, semitone, ratio;
+		index = synthPos;
+
+		semitone = (sl.value.linlin(0,1,-12,12)).round; // [AI]
+		//Convert semitone shift to pitch multiplier
+		ratio = (2 ** (semitone / 12)); // [AI]
+
+		pitchTxt.string_("Pitch: X" ++ ratio.round(0.001));
+		recordingArray[index].set(\pitchMul, ratio);
+	});
+
+	pitchSl.valueAction = 0.5;
 
 	resetBut = Button(w, Rect(230, top, 30, 20))
 		.states_([["Cue"]])
 		.action_({
-			var index = synthPos;
-			playPause.valueAction = 0;
-			recordingArray[index].free;
-			recordingArray[index] = ~makeDrumLoop.(recording, playbackBpm, spb);
-			"Reset".postln;
-		});
+		    var index = synthPos;
+		    recordingArray[index].set(\reset, 1);
+		    AppClock.sched(0.01, {recordingArray[index].set(\reset, 0);});
+		    ("Reset"+index).postln;
+	    });
 };
 
 //Create drum pads
