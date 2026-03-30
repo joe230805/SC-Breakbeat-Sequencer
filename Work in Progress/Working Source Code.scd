@@ -1,5 +1,4 @@
 b = Buffer.read(s, thisProcess.nowExecutingPath.dirname +/+ "amen 1 bar.wav");
-
 //BLOCK 1 SLICES---------------------------------------------------------------
 
 (
@@ -33,6 +32,7 @@ b = Buffer.read(s, thisProcess.nowExecutingPath.dirname +/+ "amen 1 bar.wav");
 //Call chopBeat to create an array of pointers to the start sample of each clip
 ~clipPointers = ~chopBeat.(~bars, ~beats, ~cutsEachBeat);
 ~clipPointers.postln;
+~clockBus = Bus.control(s, 1); //[AI]
 
 
 //Play a single slice defined by startSampe and endSample
@@ -75,7 +75,7 @@ SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clips
 	fftWindow = 0.1; // FFT window used for pitch shifting
 	//Setting up a trigger to the bpm
     triggerRate = (newBpm / 60) * clipsPerBeat;
-    trig = Impulse.kr(triggerRate);
+	trig = In.kr(~clockBus);
 
 	//Pulse counter for the trigger determines what part of the drum loop is being played back (index num)
     i = PulseCount.kr(trig, reset) % BufFrames.kr(arrSlices); //[AI]
@@ -105,6 +105,17 @@ SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clips
 	//Multiply all outputs by amp to allow volume control
 	Out.ar(0, (sig + sig2) * amp);
 
+}).add;
+
+SynthDef(\bpmPulseGlobal, {
+	var bpm, stepsPerBeat, triggerRate, pulse;
+	bpm = \bpm.kr(160); // [AI]
+	stepsPerBeat = \stepsPerBeat.kr(2); // [AI]
+	triggerRate = (bpm / 60) * stepsPerBeat;
+
+	pulse = Impulse.kr(triggerRate);
+
+	Out.kr(~clockBus, pulse);
 }).add;
 
 //Function to create \playRegion synth (drum loop and bassline)
@@ -200,13 +211,15 @@ playPause = Button(w, Rect(30, 30, 110, 30))
 .action_({ |but|
     if(but.value == 0, {
 		//Stop playback of drum loop
+
 		recordingArray.do {|item|
 			if(item != nil, {
 				item.run(false);
 			});
 		};
+		~bpmPulse.free;
     }, {
-
+		~bpmPulse = Synth(\bpmPulseGlobal);
 		recordingArray.do {|item|
 			if(item != nil, {
 				item.run(true);
@@ -237,14 +250,7 @@ bpmButt = NumberBox(w, Rect(30, 65, 30, 20))//[AI]
     playbackBpm = nb.value;
     ("BPM set to " + playbackBpm).postln;
 	//Set drumLoop synth's bpm if playback is live
-    if(drumLoop.notNil, {
-        drumLoop.set(\newBpm, playbackBpm);
-    });
-	recordingArray.do {|item|
-		if(item != nil, {
-			item.set(\newBpm, playbackBpm);
-		});
-	};
+	~bpmPulse.set(\bpm, playbackBpm);
 });
 //Default value
 bpmButt.valueAction = 160;//[AI]
