@@ -68,7 +68,7 @@ SynthDef(\playClip, {|startSample, endSample, bufnum, durationSeconds, amp|
 
 //Play drums and bassline defined by arrPointers and bassline
 SynthDef(\playRegion, {|bufnum, arrSlices, arrPointers, newBpm, sampleBpm, clipsPerBeat, bassline, amp, pitchMul, reset = 0|
-	var i, j, start, end, playhead, triggerRate, trig, durMul, sig, sig2, freq, env, fftWindow, startTrig;
+	var i, j, start, end, playhead, triggerRate, trig, durMul, sig, sig2, freq, env, fftWindow, step, subdivision = 2 /*1 = 16ths, 2 = 8ths, 4 = 4ths */;
 
 	//Value to multiply any playback rate arguments like 'rate' in Phasor
     durMul = newBpm / sampleBpm;
@@ -353,7 +353,37 @@ makePad = { |label, num, x, y, height = 30|
     });
 };
 
+w.view.keyDownAction = { |view, char, modifiers, unicode, keycode, key|
+	var synth;
+	var num = char.asInteger - 48;
+    ("Down: " ++ num ++ "  unicode: " ++ unicode ++ "  keycode: " ++ keycode).postln;
+	(char.asInteger - 48).postln;
 
+	//Play the drum allocated to this button
+	~playDrum.(num, vol * 1.5);
+
+	//If recording is active, add the drum clip number to beat recording array
+	if(recording.value == 1) {
+		beatRecording.add(num);
+		//Update progress label
+		beatProgress = beatProgress+ 1;
+		beatProgressLabel.string = beatProgress + "/" + ((barsInBeat * beatsInBars) * slicesPerBeat);
+		beatRecording.postln;
+		//Stop recording once the beat has reached the correct size
+		if(beatRecording.size == ((barsInBeat * beatsInBars) * slicesPerBeat)) {
+			recording.value = 0;
+			//add a synth to array
+			synth = ~makeDrumLoop.(beatRecording,playbackBpm, slicesPerBeat);
+			// recordingArray = recordingArray.add(synth);
+			"Added:".postln;
+			recordingArray.postln;
+			recordingRow.(synth, beatRecording,slicesPerBeat);
+
+		};
+
+	};
+
+};
 
 //Function to craete a white bass key button
 makeWhiteKeys = { |label, num, x, y|
